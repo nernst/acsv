@@ -1,0 +1,3 @@
+
+class CsvError(Exception):
+    pass
