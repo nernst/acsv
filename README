@@ -3,3 +3,5 @@ acsv
 An asynchronous CSV parsing library modelled after Python's builtin csv library.
 
 API is intended to be compatible but asynchronous. Builtin Dialects are supported and referenced.
+
+This project is currently being driven mostly has a hobby project, and is not in production use anywhere.
