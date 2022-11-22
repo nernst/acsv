@@ -4,7 +4,7 @@ import csv as _csv
 import io
 import sys
 from enum import Enum, auto
-from typing import cast, AsyncGenerator, Awaitable, Iterable, Optional, Sequence, Tuple
+from typing import cast, AsyncGenerator, Awaitable, Iterable, Optional, Sequence, Tuple, TypeVar
 from .exceptions import CsvError
 from ._protocols import AsyncFile
 
@@ -27,10 +27,12 @@ class _Scanner:
     buffer_size: int
     buffer: Optional[str]
     pos: int = 0
-    _next_fill = Optional[Awaitable[str]]
+    _next_fill: Optional[asyncio.Task[str]]
     line_start: int = 0
     line: int = 1
     bpos: int = 0
+
+    Self = TypeVar("Self", bound="_Scanner")
 
     @property
     def current(self) -> Optional[str]:
@@ -43,7 +45,19 @@ class _Scanner:
         self.csvfile = csvfile
         self.buffer_size = buffer_size
         self.buffer = None
+
+    async def __aenter__(self: Self) -> Self:
         self._next_fill = asyncio.create_task(self.csvfile.read(self.buffer_size))
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        if self._next_fill is not None:
+            self._next_fill.cancel()
+            try:
+                await self._next_fill
+            except asyncio.exceptions.CancelledError:
+                pass
+            self._next_fill = None
 
     async def _advance(self) -> bool:
         if self.buffer is None:
@@ -145,62 +159,70 @@ class Reader:
                 yield line
             line = []
 
-        async for token, c, line_no, col in _Scanner(self.dialect, self._csvfile):
-            # print(f"{token=} {c=}, {line_no=}, {col=}")
-            match token:
-                case _Token.CHAR if c is not None:
-                    field.write(c)
+        def bad_state(token, char, line_no, col, reason: Optional[str] = None):
+            # print(f"Bad Format: {token} {char=} @ {line_no=}:{col=} {state=} {reason=}")
+            raise CsvError(f"Bad Format: {token} {char=} @ {line_no=}:{col=} {state=} {reason=}")
 
-                case _Token.DELIMITER if state == _State.QUOTED_FIELD:
-                    field.write(self.dialect.delimiter)
+        async with _Scanner(self.dialect, self._csvfile) as scanner:
+            async for token, c, line_no, col in scanner:
+                # print(f"{token=} {c=}, {line_no=}, {col=}")
+                match token:
+                    case _Token.CHAR if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
+                        bad_state(token, c, line_no, col)
 
-                case _Token.DELIMITER if state == _State.ESCAPE:
-                    field.write(self.dialect.delimiter)
+                    case _Token.CHAR if c is not None:
+                        field.write(c)
 
-                case _Token.DELIMITER if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
-                    new_field()
+                    case _Token.DELIMITER if state == _State.QUOTED_FIELD:
+                        field.write(self.dialect.delimiter)
 
-                case _Token.DELIMITER:
-                    new_field()
+                    case _Token.DELIMITER if state == _State.ESCAPE:
+                        field.write(self.dialect.delimiter)
 
-                case _Token.QUOTE if state == _State.BEGIN_FIELD:
-                    state = _State.QUOTED_FIELD
-                
-                case _Token.QUOTE if state == _State.FIELD:
-                    raise CsvError(f"Unexpected {c} @ {line_no=}:{col=}")
-                
-                case _Token.QUOTE if state == _State.QUOTED_FIELD:
-                    state = _State.EXPECT_QUOTE_OR_FIELD_TERM
+                    case _Token.DELIMITER if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
+                        new_field()
 
-                case _Token.QUOTE if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
-                    assert c is not None
-                    state = _State.QUOTED_FIELD
-                    field.write(c)
+                    case _Token.DELIMITER:
+                        new_field()
 
-                case _Token.ESCAPE_CHAR if self.dialect.escapechar and state == _State.ESCAPE:
-                    field.write(self.dialect.escapechar)
+                    case _Token.QUOTE if state == _State.BEGIN_FIELD:
+                        state = _State.QUOTED_FIELD
+                    
+                    case _Token.QUOTE if state == _State.FIELD:
+                        bad_state(token, c, line_no, col)
 
-                # probably insufficient
-                case _Token.ESCAPE_CHAR if self.dialect.escapechar and state != _State.ESCAPE:
-                    state = _State.ESCAPE
+                    case _Token.QUOTE if state == _State.QUOTED_FIELD:
+                        state = _State.EXPECT_QUOTE_OR_FIELD_TERM
 
-                case _Token.CR:
-                    continue
+                    case _Token.QUOTE if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
+                        assert c is not None
+                        state = _State.QUOTED_FIELD
+                        field.write(c)
 
-                case _Token.LF:
-                    if state == _State.QUOTED_FIELD:
-                        field.write("\n")
-                    else:
+                    case _Token.ESCAPE_CHAR if self.dialect.escapechar and state == _State.ESCAPE:
+                        field.write(self.dialect.escapechar)
+
+                    # probably insufficient
+                    case _Token.ESCAPE_CHAR if self.dialect.escapechar and state != _State.ESCAPE:
+                        state = _State.ESCAPE
+
+                    case _Token.CR:
+                        continue
+
+                    case _Token.LF:
+                        if state == _State.QUOTED_FIELD:
+                            field.write("\n")
+                        else:
+                            new_field()
+                            for l in new_line():
+                                yield l
+
+                    case _Token.EOF:
                         new_field()
                         for l in new_line():
                             yield l
+                        return
 
-                case _Token.EOF:
-                    new_field()
-                    for l in new_line():
-                        yield l
-                    return
-
-                case _:
-                    raise CsvError(f"Unknown token: {token} @ {line_no=}:{col=} {state=}")
-        
+                    case _:
+                        bad_state(token, c, line_no, col, "Unknown token")
+    

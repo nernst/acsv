@@ -1,8 +1,7 @@
 import pathlib
 import unittest
-from .reader import Reader
-from .writer import Writer
-from .util import AsyncStringIO
+from acsv import Reader, Writer
+from acsv.util import AsyncStringIO
 
 
 class WriterTestCase(unittest.IsolatedAsyncioTestCase):

@@ -3,8 +3,8 @@ import pathlib
 import sys
 import unittest
 
-from . import DictReader
-from .util import AsyncTextFile, aenumerate
+from acsv import DictReader
+from acsv.util import AsyncTextFile, aenumerate
 
 assert sys.version_info >= (3, 10)
 

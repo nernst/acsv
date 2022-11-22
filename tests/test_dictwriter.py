@@ -1,9 +1,8 @@
 import pathlib
 import unittest
 from typing import Sequence
-from .dictreader import DictReader
-from .dictwriter import DictWriter
-from .util import AsyncStringIO
+from acsv import DictReader, DictWriter
+from acsv.util import AsyncStringIO
 
 
 class DictWriterTestCase(unittest.IsolatedAsyncioTestCase):
