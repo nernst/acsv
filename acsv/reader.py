@@ -35,9 +35,9 @@ class _Scanner:
     Self = TypeVar("Self", bound="_Scanner")
 
     @property
-    def current(self) -> Optional[str]:
+    def current(self) -> str:
         if self.buffer is None:
-            return None
+            return ""
         return self.buffer[self.bpos]
 
     def __init__(self, dialect: _csv.Dialect, csvfile: AsyncFile, buffer_size: int = 8192) -> None:
@@ -82,16 +82,16 @@ class _Scanner:
             self._next_fill = asyncio.create_task(self.csvfile.read(self.buffer_size)) 
             return True
 
-    async def __aiter__(self) -> AsyncGenerator[Tuple[_Token, Optional[str], int, int], None]:
+    async def __aiter__(self) -> AsyncGenerator[Tuple[_Token, str, int, int], None]:
         dialect = self.dialect
         while True:
             if not await self._advance():
-                yield _Token.EOF, None, self.line, self.pos - self.line_start
+                yield _Token.EOF, "", self.line, self.pos - self.line_start
                 break
 
-            c = self.current
+            char = self.current
             token: _Token
-            match (c):
+            match (char):
                 case (dialect.quotechar):
                     token = _Token.QUOTE
                 case (dialect.escapechar) if dialect.escapechar:
@@ -109,7 +109,7 @@ class _Scanner:
                 case _:
                     token = _Token.CHAR
 
-            yield token, c, self.line, self.pos - self.line_start
+            yield token, char, self.line, self.pos - self.line_start
 
 
 class _State(Enum):
@@ -160,23 +160,20 @@ class Reader:
             line = []
 
         def bad_state(token, char, line_no, col, reason: Optional[str] = None):
-            # print(f"Bad Format: {token} {char=} @ {line_no=}:{col=} {state=} {reason=}")
+            nonlocal state
             raise CsvError(f"Bad Format: {token} {char=} @ {line_no=}:{col=} {state=} {reason=}")
 
         async with _Scanner(self.dialect, self._csvfile) as scanner:
-            async for token, c, line_no, col in scanner:
-                # print(f"{token=} {c=}, {line_no=}, {col=}")
+            async for token, char, line_no, col in scanner:
+                # print(f"{token=} {char=}, {line_no=}, {col=}")
                 match token:
                     case _Token.CHAR if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
-                        bad_state(token, c, line_no, col)
+                        bad_state(token, char, line_no, col)
 
-                    case _Token.CHAR if c is not None:
-                        field.write(c)
+                    case _Token.CHAR:
+                        field.write(char)
 
-                    case _Token.DELIMITER if state == _State.QUOTED_FIELD:
-                        field.write(self.dialect.delimiter)
-
-                    case _Token.DELIMITER if state == _State.ESCAPE:
+                    case _Token.DELIMITER if state in (_State.QUOTED_FIELD, _State.ESCAPE):
                         field.write(self.dialect.delimiter)
 
                     case _Token.DELIMITER if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
@@ -189,20 +186,18 @@ class Reader:
                         state = _State.QUOTED_FIELD
                     
                     case _Token.QUOTE if state == _State.FIELD:
-                        bad_state(token, c, line_no, col)
+                        bad_state(token, char, line_no, col)
 
                     case _Token.QUOTE if state == _State.QUOTED_FIELD:
                         state = _State.EXPECT_QUOTE_OR_FIELD_TERM
 
                     case _Token.QUOTE if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
-                        assert c is not None
                         state = _State.QUOTED_FIELD
-                        field.write(c)
+                        field.write(char)
 
                     case _Token.ESCAPE_CHAR if self.dialect.escapechar and state == _State.ESCAPE:
                         field.write(self.dialect.escapechar)
 
-                    # probably insufficient
                     case _Token.ESCAPE_CHAR if self.dialect.escapechar and state != _State.ESCAPE:
                         state = _State.ESCAPE
 
@@ -210,6 +205,7 @@ class Reader:
                         continue
 
                     case _Token.LF:
+                        self.line_num += 1
                         if state == _State.QUOTED_FIELD:
                             field.write("\n")
                         else:
@@ -224,5 +220,5 @@ class Reader:
                         return
 
                     case _:
-                        bad_state(token, c, line_no, col, "Unknown token")
+                        bad_state(token, char, line_no, col, "Unknown token")
     
