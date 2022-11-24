@@ -27,8 +27,9 @@ class DictReader(Generic[RestVal]):
         restkey: Optional[str] = None,
         restval: Optional[RestVal] = None,
         dialect: str | csv.Dialect = "excel",
+        **kwargs,
     ) -> None:
-        self._reader = Reader(csvfile, dialect=dialect)
+        self._reader = Reader(csvfile, dialect=dialect, **kwargs)
         self._fieldnames = fieldnames
         self._restkey = restkey
         self._restval = restval

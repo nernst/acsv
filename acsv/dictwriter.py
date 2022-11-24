@@ -34,9 +34,15 @@ class DictWriter:
 
         return await self._writer.writerow(line)
 
-    async def writerows(self, rows: Iterable[RowType]) -> None:
+    async def writerows(self, rows: Iterable[RowType]) -> int:
+        res = 0
         for row in rows:
-            await self.writerow(row)
+            num = await self.writerow(row)
+            if num is None:
+                raise CsvError("writerow returned None")
+            res += num
+
+        return res
 
     async def writeheader(self) -> Optional[int]:
         return await self._writer.writerow(self._fieldnames)

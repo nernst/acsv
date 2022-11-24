@@ -7,6 +7,7 @@ from enum import Enum, auto
 from typing import cast, AsyncGenerator, Awaitable, Iterable, Optional, Sequence, Tuple, TypeVar
 from .exceptions import CsvError
 from ._protocols import AsyncFile
+from .dialect import get_dialect
 
 assert sys.version_info >= (3, 10)
 
@@ -134,9 +135,14 @@ class Reader:
             raise CsvError("fieldnames is not available until first row has been read.")
         return self._fieldnames
 
-    def __init__(self, csvfile: AsyncFile, dialect: str | _csv.Dialect = "excel") -> None:
+    def __init__(
+            self, 
+            csvfile: AsyncFile, 
+            dialect: str | _csv.Dialect = "excel",
+            **kwargs,
+        ) -> None:
         self._csvfile = csvfile
-        self.dialect = _csv.get_dialect(dialect) if isinstance(dialect, str) else dialect
+        self.dialect = get_dialect(dialect, **kwargs)
 
     async def __aiter__(self) -> AsyncGenerator[Sequence[str], None]:
         line: list[str] = []
