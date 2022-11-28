@@ -110,9 +110,6 @@ class _Scanner:
                     token = _Token.DELIMITER
                 case ' ':
                     token = _Token.WS
-                
-                case '\t' if '\t' != _Token.DELIMITER:
-                    token = _Token.WS
 
                 case _:
                     token = _Token.CHAR
