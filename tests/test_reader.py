@@ -119,6 +119,33 @@ Column1,Column2
             else:
                 self.fail(f"Got unexpected row: {repr(row)}")
 
+    async def test_skipinitialwhitespace_on(self):
+        test = """
+Column1,Column2\r
+1,   \tThis column has initial whitespace.
+""".strip()
+        expected = (
+            ["Column1", "Column2"],
+            ["1", "This column has initial whitespace."],
+        )
+
+        async with AsyncStringIO(test, newline='') as fp:
+            reader = Reader(fp, skipinitialspace=True)
+            await self._run_test(reader, expected)
+
+    async def test_skipinitialwhitespace_off(self):
+        test = """
+Column1,Column2\r
+1,   \tThis column has initial whitespace.
+""".strip()
+        expected = (
+            ["Column1", "Column2"],
+            ["1", "   \tThis column has initial whitespace."],
+        )
+
+        async with AsyncStringIO(test, newline='') as fp:
+            reader = Reader(fp, skipinitialspace=False)
+            await self._run_test(reader, expected)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ class _Token(Enum):
     CR = auto()
     LF = auto()
     EOF = auto()
+    WS = auto()
 
 
 class _Scanner:
@@ -41,7 +42,7 @@ class _Scanner:
             return ""
         return self.buffer[self.bpos]
 
-    def __init__(self, dialect: _csv.Dialect, csvfile: AsyncFile, buffer_size: int = 8192) -> None:
+    def __init__(self, dialect: _csv.Dialect, csvfile: AsyncFile, buffer_size: int = 4096) -> None:
         self.dialect = dialect
         self.csvfile = csvfile
         self.buffer_size = buffer_size
@@ -107,6 +108,12 @@ class _Scanner:
                     token = _Token.LF
                 case (dialect.delimiter):
                     token = _Token.DELIMITER
+                case ' ':
+                    token = _Token.WS
+                
+                case '\t' if '\t' != _Token.DELIMITER:
+                    token = _Token.WS
+
                 case _:
                     token = _Token.CHAR
 
@@ -149,7 +156,13 @@ class Reader:
         field = io.StringIO()
         state = _State.BEGIN_FIELD
 
-        def new_field():
+        def emit(character: str) -> None:
+            nonlocal state, field
+            field.write(character)
+            if state == _State.BEGIN_FIELD:
+                state = _State.FIELD
+
+        def new_field() -> None:
             nonlocal line, field, state
             line.append(field.getvalue())
             field.truncate(0)
@@ -171,16 +184,16 @@ class Reader:
 
         async with _Scanner(self.dialect, self._csvfile) as scanner:
             async for token, char, line_no, col in scanner:
-                # print(f"{token=} {char=}, {line_no=}, {col=}")
+                print(f"{token=} {char=}, {line_no=}, {col=}")
                 match token:
                     case _Token.CHAR if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
                         bad_state(token, char, line_no, col)
 
                     case _Token.CHAR:
-                        field.write(char)
+                        emit(char)
 
                     case _Token.DELIMITER if state in (_State.QUOTED_FIELD, _State.ESCAPE):
-                        field.write(self.dialect.delimiter)
+                        emit(self.dialect.delimiter)
 
                     case _Token.DELIMITER if state == _State.EXPECT_QUOTE_OR_FIELD_TERM:
                         new_field()
@@ -218,6 +231,12 @@ class Reader:
                             new_field()
                             for l in new_line():
                                 yield l
+
+                    case _Token.WS if self.dialect.skipinitialspace and state == _State.BEGIN_FIELD:
+                        pass
+                
+                    case _Token.WS:
+                        emit(char)
 
                     case _Token.EOF:
                         new_field()
